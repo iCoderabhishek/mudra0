@@ -10,6 +10,8 @@ import { auditRouter } from "./modules/audit/audit.routes";
 import { createAuthRouter } from "./modules/auth/auth.routes";
 import { customersRouter } from "./modules/customers/customers.routes";
 import { docsRouter } from "./modules/docs/docs.routes";
+import { documentsRouter } from "./modules/documents/documents.routes";
+import { reportsRouter } from "./modules/reports/reports.routes";
 import { goldRatesRouter } from "./modules/gold-rates/gold-rates.routes";
 import { loansRouter } from "./modules/loans/loans.routes";
 import { paymentsRouter } from "./modules/payments/payments.routes";
@@ -51,6 +53,8 @@ export function createApp() {
   app.use(appraisalsRouter);
   app.use(loansRouter);
   app.use(paymentsRouter);
+  app.use(documentsRouter);
+  app.use(reportsRouter);
   app.use(auditRouter);
 
   app.use(notFoundHandler);
