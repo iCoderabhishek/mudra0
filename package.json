@@ -6,12 +6,12 @@
   "scripts": {
     "dev": "bun --watch src/server.ts",
     "start": "bun src/server.ts",
-    "db:migrate": "prisma migrate deploy",
+    "db:migrate": "bunx --bun prisma migrate deploy",
     "db:seed": "bun prisma/seed.ts",
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "typecheck": "tsc --noEmit",
-    "db:generate": "prisma generate"
+    "db:generate": "bunx --bun prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^6",
