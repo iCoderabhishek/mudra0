@@ -43,12 +43,12 @@
 ## Deliberately left out
 
 - **Frontend (Tier 1 item 9).** No screens were built. The API, Swagger UI and seed data are the way to use it. This was a conscious time trade-off in favour of correct and tested backend rules.
-- Tier 3: nightly accrual job, customer self-service view, payment reversal, deployment. A CI workflow is included but has not run yet.
+- Tier 3: nightly accrual job, customer self-service view, payment reversal, deployment. CI (typecheck, tests, Docker build) is included and passing.
 - Real email, SMS, KYC and payment gateways. Email goes to Mailpit or the console. There is no KYC check beyond format validation.
 
 ## Known gaps and risks
 
-- `docker compose up` was written but **not run end to end** while building, because the build sandbox had no working Docker. Migrations, seed, server and the full test suite were run against a local Postgres 16 with the same commands the container runs. The Redis-backed code paths (rate limit store, rate cache) are not covered by the automated tests, which use the in-process fallback.
+- `docker compose up` itself was **not run end to end** while building, because the build sandbox had no working Docker. GitHub Actions does build the Docker image and runs the full test suite against a fresh Postgres 16. Migrations, seed and the server were also run locally with the same commands the container runs. The Redis-backed code paths (rate limit store, rate cache) are not covered by the automated tests, which use the in-process fallback.
 - Date-only fields (`disbursedOn`, `maturityDate`, `dateOfBirth`) are serialised as ISO timestamps at midnight UTC (`2026-10-31T00:00:00.000Z`). Clients should read only the date part.
 - Per-IP limits depend on `TRUST_PROXY` being set correctly behind a load balancer.
 - **Report scale.** The portfolio function loads every disbursed loan in scope into memory. That is fine for one branch, but an admin all-branch dashboard at 200k loans would be slow. The fix is to aggregate in SQL or to read from a nightly snapshot, which is what the Tier 3 accrual job would produce.
