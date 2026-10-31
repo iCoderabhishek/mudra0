@@ -1,4 +1,9 @@
+import type { AuthUser } from "../../middleware/auth";
+import { toDbDate } from "../../domain/dates";
+import { writeAudit } from "../../lib/audit";
+import { clock } from "../../lib/clock";
 import { conflict } from "../../lib/errors";
+import { pageArgs, toPage, type PageQuery } from "../../lib/pagination";
 import { prisma } from "../../lib/prisma";
 import { cache } from "../../lib/redis";
 
@@ -28,3 +33,27 @@ export async function currentRate(): Promise<CurrentRate> {
 }
 
 export const invalidateCurrentRate = () => cache.del(CACHE_KEY);
+
+// Rates are append-only: setting a new one adds a row and the latest row wins.
+export async function setRate(user: AuthUser, ratePaisePerGram: bigint) {
+  const rate = await prisma.$transaction(async (tx) => {
+    const created = await tx.goldRate.create({
+      data: { ratePaisePerGram, effectiveDate: toDbDate(clock.today()), setById: user.id },
+    });
+    await writeAudit(tx, {
+      actorId: user.id,
+      action: "GOLD_RATE_SET",
+      entityType: "GoldRate",
+      entityId: created.id,
+      after: created,
+    });
+    return created;
+  });
+  await invalidateCurrentRate();
+  return rate;
+}
+
+export async function rateHistory(page: PageQuery) {
+  const rows = await prisma.goldRate.findMany(pageArgs(page));
+  return toPage(rows, page.limit);
+}
