@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { currentUser, requireRole } from "../../middleware/auth";
 import { idParams } from "../../lib/validation";
-import { createLoanSchema, dueQuerySchema, listLoansSchema, rejectSchema } from "./loans.schema";
+import { createLoanSchema, dueQuerySchema, listLoansSchema, loanTermsSchema, rejectSchema } from "./loans.schema";
+import { renewLoan } from "./renewal.service";
 import {
   approvalQueue,
   approveLoan,
@@ -52,4 +53,9 @@ loansRouter.post("/loans/:id/reject", requireRole("MANAGER"), async (req, res) =
 loansRouter.post("/loans/:id/close", requireRole("STAFF", "MANAGER"), async (req, res) => {
   const { id } = idParams.parse(req.params);
   res.json(await closeLoan(currentUser(req), id));
+});
+
+loansRouter.post("/loans/:id/renew", requireRole("STAFF"), async (req, res) => {
+  const { id } = idParams.parse(req.params);
+  res.status(201).json(await renewLoan(currentUser(req), id, loanTermsSchema.parse(req.body)));
 });
