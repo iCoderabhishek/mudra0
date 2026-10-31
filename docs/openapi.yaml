@@ -2,4 +2,378 @@ openapi: 3.0.3
 info:
   title: Swarn Sathi Branch API
   version: 0.1.0
-paths: {}
+  description: |
+    Branch console API for gold loans.
+
+    - Auth: `POST /auth/request-code`, then `POST /auth/verify` returns a bearer token. Send `Authorization: Bearer <token>`.
+    - Money is integer **paise**, returned as strings (for example `"15000000"` = ₹1,50,000.00). Inputs accept a JSON integer or a digit string.
+    - Weights are integer **milligrams**. Business dates are IST calendar dates (`YYYY-MM-DD`).
+    - Lists use cursor pagination: pass `nextCursor` back as `cursor`. `limit` is 1-100.
+    - Errors always look like `{ "error": { "code", "message", "details"? } }`.
+servers:
+  - url: http://localhost:3000
+security:
+  - bearer: []
+
+paths:
+  /auth/request-code:
+    post:
+      tags: [Auth]
+      summary: Email a 6-digit sign-in code
+      description: Always 202, whether or not the email exists. Rate limited per email (3 / 15 min) and per IP (20 / 15 min).
+      security: []
+      requestBody: { $ref: "#/components/requestBodies/Email" }
+      responses:
+        "202": { description: Accepted }
+        "429": { $ref: "#/components/responses/Error" }
+  /auth/verify:
+    post:
+      tags: [Auth]
+      summary: Exchange email + code for a session token
+      description: Codes expire after 10 minutes, are single use, and die after 5 wrong attempts.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, pattern: "^\\d{6}$" }
+      responses:
+        "200":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  user: { $ref: "#/components/schemas/Me" }
+        "400": { $ref: "#/components/responses/Error" }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Me" } } } }
+        "401": { $ref: "#/components/responses/Error" }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: End the current session
+      responses:
+        "204": { description: Logged out }
+
+  /users:
+    get:
+      tags: [Admin]
+      summary: List users (ADMIN)
+      parameters: [{ $ref: "#/components/parameters/cursor" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/Page" }
+    post:
+      tags: [Admin]
+      summary: Create a user (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, role]
+              properties:
+                email: { type: string, format: email }
+                name: { type: string }
+                role: { $ref: "#/components/schemas/Role" }
+                branchId: { type: string, nullable: true, description: Required for STAFF and MANAGER }
+      responses:
+        "201": { description: Created }
+        "409": { $ref: "#/components/responses/Error" }
+  /users/{id}:
+    patch:
+      tags: [Admin]
+      summary: Update or deactivate a user (ADMIN). Ends the user's sessions on role, branch or active change.
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                role: { $ref: "#/components/schemas/Role" }
+                branchId: { type: string, nullable: true }
+                active: { type: boolean }
+      responses:
+        "200": { description: Updated }
+
+  /gold-rates/current:
+    get:
+      tags: [Gold rate]
+      summary: Latest 24K rate in paise per gram
+      responses:
+        "200": { description: OK }
+        "409": { description: No rate set yet }
+
+  /customers:
+    get:
+      tags: [Customers]
+      summary: Search customers in your branch (STAFF, MANAGER)
+      parameters:
+        - { name: q, in: query, schema: { type: string, minLength: 2 }, description: Name substring, phone prefix or exact PAN }
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200": { $ref: "#/components/responses/Page" }
+    post:
+      tags: [Customers]
+      summary: Create a customer (STAFF)
+      description: The full Aadhaar number is validated and discarded; only the last 4 digits are stored.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, phone, dateOfBirth, address, pan, aadhaar]
+              properties:
+                name: { type: string }
+                phone: { type: string, example: "9830012345" }
+                dateOfBirth: { type: string, format: date, description: Customer must be 18 or older }
+                address: { type: string }
+                pan: { type: string, example: ABCDE1234F }
+                aadhaar: { type: string, example: "123456789012" }
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/Error" }
+        "409": { description: PAN already registered }
+  /customers/{id}:
+    get:
+      tags: [Customers]
+      summary: Customer with recent appraisals and loans (STAFF, MANAGER)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: OK }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /appraisals:
+    post:
+      tags: [Appraisals]
+      summary: Appraise gold items at the current rate (STAFF)
+      description: Saved as an immutable snapshot including the rate used. Returns net weight, value and max loan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customerId, items]
+              properties:
+                customerId: { type: string }
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [description, grossWeightMg, karat]
+                    properties:
+                      description: { type: string }
+                      grossWeightMg: { type: integer, example: 10500 }
+                      stoneWeightMg: { type: integer, default: 0 }
+                      karat: { type: integer, enum: [18, 20, 22, 24] }
+      responses:
+        "201": { description: Created }
+        "400": { $ref: "#/components/responses/Error" }
+  /appraisals/{id}:
+    get:
+      tags: [Appraisals]
+      summary: Appraisal with items (STAFF, MANAGER)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: OK }
+
+  /loans:
+    get:
+      tags: [Loans]
+      summary: List branch loans (STAFF, MANAGER)
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/LoanStatus" } }
+        - { name: customerId, in: query, schema: { type: string } }
+        - { name: overdue, in: query, schema: { type: string, enum: ["true", "false"] } }
+        - { $ref: "#/components/parameters/cursor" }
+        - { $ref: "#/components/parameters/limit" }
+      responses:
+        "200": { $ref: "#/components/responses/Page" }
+    post:
+      tags: [Loans]
+      summary: Sanction a loan against an appraisal (STAFF)
+      description: |
+        Enforces LTV by slab (≤₹2L 80%, ≤₹5L 75%, above 70%) and scheme tenure (STANDARD 3-12 months at 18%, QUICK 1-3 months at 12%).
+        Above ₹3,00,000 the loan is PENDING_APPROVAL; otherwise ACTIVE and disbursed today.
+        Fee is 1% (min ₹500), deducted from the disbursal.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [appraisalId, scheme, principalPaise, tenureMonths]
+              properties:
+                appraisalId: { type: string }
+                scheme: { type: string, enum: [STANDARD, QUICK] }
+                principalPaise: { $ref: "#/components/schemas/Paise" }
+                tenureMonths: { type: integer }
+      responses:
+        "201": { description: Created }
+        "409": { description: Appraisal already backs a loan }
+        "422": { description: "LTV_EXCEEDED, INVALID_TENURE or PRINCIPAL_TOO_SMALL" }
+  /loans/{id}:
+    get:
+      tags: [Loans]
+      summary: Loan detail with appraisal items, payments, today's balance and overdue flag
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: OK }
+  /loans/{id}/due:
+    get:
+      tags: [Loans]
+      summary: Outstanding principal, accrued interest and total due on a date
+      parameters:
+        - { $ref: "#/components/parameters/id" }
+        - { name: date, in: query, schema: { type: string, format: date }, description: Defaults to today (IST) }
+      responses:
+        "200":
+          description: OK
+          content: { application/json: { schema: { $ref: "#/components/schemas/Balance" } } }
+        "409": { description: Loan not disbursed }
+        "422": { description: Date before disbursal }
+  /approvals:
+    get:
+      tags: [Approvals]
+      summary: Pending loans in your branch, oldest first (MANAGER)
+      responses:
+        "200": { description: OK }
+  /loans/{id}/approve:
+    post:
+      tags: [Approvals]
+      summary: Approve and disburse (MANAGER, not the loan's creator)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: Approved }
+        "403": { description: You created this loan }
+        "409": { description: Not pending (already decided) }
+  /loans/{id}/reject:
+    post:
+      tags: [Approvals]
+      summary: Reject (MANAGER, not the loan's creator)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string } } } } }
+      responses:
+        "200": { description: Rejected }
+  /loans/{id}/payments:
+    post:
+      tags: [Repayments]
+      summary: Record a payment (STAFF)
+      description: |
+        Clears accrued interest first, then principal. Amounts above the total due are rejected.
+        `Idempotency-Key` is required: a retry with the same key and amount returns the original payment with 200.
+      parameters:
+        - { $ref: "#/components/parameters/id" }
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string, pattern: "^[A-Za-z0-9_-]{8,100}$" } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountPaise]
+              properties:
+                amountPaise: { $ref: "#/components/schemas/Paise" }
+                mode: { type: string, enum: [CASH, UPI, BANK_TRANSFER], default: CASH }
+      responses:
+        "201": { description: Recorded }
+        "200": { description: Replay of an earlier request with the same key }
+        "409": { description: "Loan not active, or key reused with a different amount" }
+        "422": { description: OVERPAYMENT }
+  /loans/{id}/close:
+    post:
+      tags: [Repayments]
+      summary: Close a fully paid loan and record the gold release (STAFF, MANAGER)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: Closed, includes goldRelease (who, when, items) }
+        "422": { description: OUTSTANDING_NOT_ZERO }
+
+  /audit:
+    get:
+      tags: [Audit]
+      summary: Audit trail, newest first (MANAGER sees own branch, ADMIN sees all). Read-only.
+      parameters:
+        - { name: entityType, in: query, schema: { type: string, example: Loan } }
+        - { name: entityId, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50 } }
+      responses:
+        "200": { $ref: "#/components/responses/Page" }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  parameters:
+    id: { name: id, in: path, required: true, schema: { type: string } }
+    cursor: { name: cursor, in: query, schema: { type: string } }
+    limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+  requestBodies:
+    Email:
+      required: true
+      content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } }
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+    Page:
+      description: A page of results
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              items: { type: array, items: { type: object } }
+              nextCursor: { type: string, nullable: true }
+  schemas:
+    Paise: { type: string, pattern: "^\\d+$", example: "15000000" }
+    Role: { type: string, enum: [STAFF, MANAGER, ADMIN] }
+    LoanStatus: { type: string, enum: [PENDING_APPROVAL, ACTIVE, REJECTED, CLOSED] }
+    Me:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+        name: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        branchId: { type: string, nullable: true }
+    Balance:
+      type: object
+      properties:
+        asOf: { type: string, format: date }
+        outstandingPrincipalPaise: { $ref: "#/components/schemas/Paise" }
+        accruedInterestPaise: { $ref: "#/components/schemas/Paise" }
+        totalDuePaise: { $ref: "#/components/schemas/Paise" }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details: {}
