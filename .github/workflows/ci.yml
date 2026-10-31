@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: swarn
+          POSTGRES_PASSWORD: swarn
+          POSTGRES_DB: swarn_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U swarn"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgresql://swarn:swarn@localhost:5432/swarn_test
+      TEST_DATABASE_URL: postgresql://swarn:swarn@localhost:5432/swarn_test
+      AUTH_SECRET: ci-only-secret-not-used-anywhere-else
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.14
+      - run: bun install --frozen-lockfile
+      - run: bun run db:generate
+      - run: bun run typecheck
+      - run: bun test
+      - name: Docker image builds
+        run: docker build -t swarn-sathi-api .
