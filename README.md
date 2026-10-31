@@ -37,7 +37,9 @@ Seeded logins (all data is fictional):
 | Branch manager | manager.howrah@swarnsathi.test | HWH01 |
 | Branch staff | staff.howrah@swarnsathi.test | HWH01 |
 
-The seed also creates a 7-day gold rate history, five customers and loans in each state: active with payments, overdue, closed with gold released, and one ₹3,50,000 loan waiting in the Kolkata approvals queue.
+The seed also creates a 7-day gold rate history, five customers and loans in each state: active with payments, overdue, closed with gold released, and one ₹3,50,000 loan waiting in the Kolkata approvals queue. Today's seeded rate drops to ₹6,800, which puts two loans on the LTV breach report.
+
+Main Tier 2 endpoints: `POST /gold-rates`, `GET /reports/dashboard`, `GET /reports/ltv-breaches`, `GET /reports/loans.csv?from=…&to=…`, `GET /loans/:id/statement`, `GET /payments/:id/receipt` (print-friendly HTML) and `POST /loans/:id/renew`.
 
 ## Tests
 
@@ -45,7 +47,7 @@ The seed also creates a 7-day gold rate history, five customers and loans in eac
 docker compose run --rm api bun test
 ```
 
-Tests run against a separate `swarn_test` database, which is migrated automatically before the run. `tests/unit` covers the money rules (interest, allocation, LTV slabs, fees). `tests/integration` drives the HTTP API: magic code rules, a role × endpoint permission matrix, branch isolation, the loan lifecycle, concurrent approvals and payments, and immutability of the audit trail.
+Tests run against a separate `swarn_test` database, which is migrated automatically before the run. `tests/unit` covers the money rules (interest, allocation, LTV slabs, fees). `tests/integration` drives the HTTP API: magic code rules, a role × endpoint permission matrix, branch isolation, the loan lifecycle, concurrent approvals, payments and renewals, immutability of the audit trail, dashboard and CSV reconciliation, the LTV breach report, statements and receipts. CI (`.github/workflows/ci.yml`) runs typecheck, tests and a Docker build.
 
 ## Run without Docker
 
@@ -69,7 +71,8 @@ src/
                          clock (IST "today"), errors, pagination, validation helpers
   middleware/            Authentication, role checks, rate limits, error handler
   modules/<name>/        One folder per feature: *.routes.ts (HTTP + Zod) and *.service.ts (logic)
-    auth users customers gold-rates appraisals loans payments audit docs
+    auth users customers gold-rates appraisals loans (incl. renewal) payments
+    reports (dashboard, CSV, LTV breaches) documents (statement, receipt) audit docs
 prisma/
   schema.prisma          Data model
   migrations/            Versioned SQL, including CHECK constraints, a partial unique

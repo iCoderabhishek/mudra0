@@ -19,6 +19,9 @@
 3. **A test called `JSON.stringify` on an audit row** whose `id` is a `BigInt`, and it threw. It now checks only the `after` JSON.
 4. **Prisma CLI in the Bun Docker image.** The `prisma` bin has a `node` shebang and the Bun image has no Node, so the scripts were changed to `bunx --bun prisma`. This was caught in review, not by a failing run, because Docker was unavailable in the sandbox. See the gaps listed in DECISIONS.md.
 
+5. **Shared state between test groups.** The first Tier 2 test file reset the database in several `describe`-level `beforeAll` hooks. One group's lowered gold rate leaked into others, and loans failed with `LTV_EXCEEDED` at the wrong rate. The fix was one test file per feature, each with a single reset at the top.
+6. **A hand-computed expectation was wrong.** The receipt test expected ₹99,520.55 outstanding after a ₹2,000 payment, but ₹520.55 is the *principal paid*, so outstanding is ₹1,00,000 − ₹520.55 = ₹99,479.45. The code was right and the test was wrong, which was a reminder to derive expected values on paper.
+
 ## What I wrote or rewrote by hand, and why
 
 _TODO (candidate): list the parts you changed yourself after reading the code, for example rules you re-derived, tests you added, naming you changed, and why._
