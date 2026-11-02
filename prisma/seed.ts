@@ -7,7 +7,7 @@ import { prisma } from "../src/lib/prisma";
 import { redis } from "../src/lib/redis";
 import { createAppraisal } from "../src/modules/appraisals/appraisals.service";
 import { createCustomer } from "../src/modules/customers/customers.service";
-import { invalidateCurrentRate } from "../src/modules/gold-rates/gold-rates.service";
+import { invalidateCurrentRate, setRate } from "../src/modules/gold-rates/gold-rates.service";
 import { closeLoan, createLoan, getDue } from "../src/modules/loans/loans.service";
 import { recordPayment } from "../src/modules/payments/payments.service";
 
@@ -33,12 +33,12 @@ async function main() {
   await mk("manager.howrah@swarnsathi.test", "Debasish Manager", "MANAGER", hwh.id);
   const hwhStaff = asActor(await mk("staff.howrah@swarnsathi.test", "Esha Staff", "STAFF", hwh.id));
 
-  const rateHistory = [7_050, 7_080, 7_120, 7_100, 7_150, 7_180, 7_200];
+  const rateHistory = [7_050, 7_080, 7_120, 7_100, 7_150, 7_200];
   for (const [i, rate] of rateHistory.entries()) {
     await prisma.goldRate.create({
       data: {
         ratePaisePerGram: rupees(rate),
-        effectiveDate: toDbDate(daysAgo(rateHistory.length - 1 - i)),
+        effectiveDate: toDbDate(daysAgo(rateHistory.length - i)),
         setById: admin.id,
       },
     });
@@ -84,7 +84,9 @@ async function main() {
   await loanOn(staff, realToday, priya.id, [item("Necklace set", 70, 24)], 350_000, "STANDARD", 12);
   await loanOn(hwhStaff, daysAgo(10), sima.id, [item("Earrings", 16, 22)], 80_000, "STANDARD", 3);
 
+  // Today's rate drops, which pushes two active loans over their LTV cap for the breach report.
   clock.setToday(null);
+  await setRate(asActor(admin), rupees(6_800));
   console.log(`Seed complete. Logins: ${admin.email}, ${manager.email}, ${staff.email}`);
 }
 

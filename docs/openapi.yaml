@@ -120,6 +120,89 @@ paths:
         "200": { description: OK }
         "409": { description: No rate set yet }
 
+  /gold-rates:
+    get:
+      tags: [Gold rate]
+      summary: Rate history, newest first
+      parameters: [{ $ref: "#/components/parameters/cursor" }, { $ref: "#/components/parameters/limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/Page" }
+    post:
+      tags: [Gold rate]
+      summary: Set today's 24K rate (ADMIN). Append-only; existing appraisals and loans keep their rate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ratePaisePerGram]
+              properties:
+                ratePaisePerGram: { $ref: "#/components/schemas/Paise" }
+      responses:
+        "201": { description: Created }
+
+  /reports/dashboard:
+    get:
+      tags: [Reports]
+      summary: Portfolio totals (MANAGER for own branch, ADMIN for all or ?branchId)
+      description: |
+        Built from the same per-loan rows as the CSV export, so totals reconcile.
+        `interestAccruedTodayPaise` is one day of interest on each active loan disbursed before today.
+        `overdueAmountPaise` is the total due (principal + interest) on overdue loans.
+      parameters:
+        - { $ref: "#/components/parameters/branchId" }
+        - { $ref: "#/components/parameters/from" }
+        - { $ref: "#/components/parameters/to" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asOf: { type: string, format: date }
+                  goldRatePaisePerGram: { $ref: "#/components/schemas/Paise" }
+                  activeLoans: { type: integer }
+                  totalOutstandingPrincipalPaise: { $ref: "#/components/schemas/Paise" }
+                  interestAccruedTodayPaise: { $ref: "#/components/schemas/Paise" }
+                  overdueCount: { type: integer }
+                  overdueAmountPaise: { $ref: "#/components/schemas/Paise" }
+                  ltvBreachCount: { type: integer }
+  /reports/ltv-breaches:
+    get:
+      tags: [Reports]
+      summary: Active loans whose outstanding principal now exceeds the slab cap at today's rate
+      parameters: [{ $ref: "#/components/parameters/branchId" }]
+      responses:
+        "200": { description: OK }
+  /reports/loans.csv:
+    get:
+      tags: [Reports]
+      summary: CSV of loans disbursed in [from, to], with a totals section identical to the dashboard for the same range
+      parameters:
+        - { $ref: "#/components/parameters/branchId" }
+        - { name: from, in: query, required: true, schema: { type: string, format: date } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date } }
+      responses:
+        "200": { description: CSV file, content: { text/csv: {} } }
+
+  /loans/{id}/statement:
+    get:
+      tags: [Documents]
+      summary: Print-friendly HTML loan statement (STAFF, MANAGER)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: HTML, content: { text/html: {} } }
+  /payments/{id}/receipt:
+    get:
+      tags: [Documents]
+      summary: Print-friendly HTML payment receipt (STAFF, MANAGER)
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      responses:
+        "200": { description: HTML, content: { text/html: {} } }
+
   /customers:
     get:
       tags: [Customers]
@@ -253,6 +336,30 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/Balance" } } }
         "409": { description: Loan not disbursed }
         "422": { description: Date before disbursal }
+  /loans/{id}/renew:
+    post:
+      tags: [Loans]
+      summary: Renew an active loan against the same gold in one atomic step (STAFF)
+      description: |
+        Pays off the old loan's total due from the new principal (payment mode RENEWAL), closes it,
+        re-appraises the same items at today's rate and opens the new loan.
+        Net disbursal = principal − fee − payoff. Renewals above ₹3,00,000 are rejected (RENEWAL_NEEDS_APPROVAL).
+      parameters: [{ $ref: "#/components/parameters/id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scheme, principalPaise, tenureMonths]
+              properties:
+                scheme: { type: string, enum: [STANDARD, QUICK] }
+                principalPaise: { $ref: "#/components/schemas/Paise" }
+                tenureMonths: { type: integer }
+      responses:
+        "201": { description: "{ closedLoanId, payoffPaise, loan }" }
+        "409": { description: Loan not active (already closed or renewed) }
+        "422": { description: "LTV_EXCEEDED, PRINCIPAL_TOO_SMALL or RENEWAL_NEEDS_APPROVAL" }
   /approvals:
     get:
       tags: [Approvals]
@@ -331,6 +438,9 @@ components:
     id: { name: id, in: path, required: true, schema: { type: string } }
     cursor: { name: cursor, in: query, schema: { type: string } }
     limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    branchId: { name: branchId, in: query, schema: { type: string }, description: ADMIN only; ignored for managers }
+    from: { name: from, in: query, schema: { type: string, format: date }, description: Disbursed on or after }
+    to: { name: to, in: query, schema: { type: string, format: date }, description: Disbursed on or before }
   requestBodies:
     Email:
       required: true

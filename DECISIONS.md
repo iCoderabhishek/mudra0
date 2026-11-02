@@ -12,8 +12,21 @@
 - **One appraisal backs one loan.** A partial unique index allows a new loan on the same appraisal only if the previous one was rejected. Appraisals do not expire. In practice they probably should be valid for the same day only.
 - **Closure is explicit.** A fully paid loan stays ACTIVE (not overdue) until a staff member or manager closes it, because closing is the moment the gold is handed back. Closure records who released the gold, when, and a snapshot of the items.
 - **Customers** belong to the branch that created them. PAN is unique across the company. Customers must be 18 or older and have a 10-digit Indian mobile number.
-- **Admin** manages users and (in Tier 2) gold rates, and can read the full audit log. Admin cannot read customer KYC or loans. Managers see everything in their own branch only. A record in another branch returns 404 rather than 403, so its existence is not revealed.
+- **Admin** manages users and gold rates, sees all-branch reports, and can read the full audit log. Admin cannot read customer KYC or loans. Managers see everything in their own branch only. A record in another branch returns 404 rather than 403, so its existence is not revealed.
 - **Login.** Requesting a new code invalidates any earlier unused code. Rate limits: 3 code requests per email and 20 per IP per 15 minutes, 30 verify attempts per IP per 15 minutes, and 300 API calls per IP per minute. The request endpoint always answers 202, so it does not reveal which emails exist.
+
+- **Gold rate.** Rates are append-only and the latest row wins. A rate is effective from "today", and setting several in one day is allowed. Pending loans are not re-checked against the rate when they are approved.
+- **LTV breach.** A loan breaches when its outstanding principal is above the cap of the slab it was sanctioned under, measured against the pledged items re-valued at today's rate (with the same per-item rounding as an appraisal). Accrued interest is not included.
+- **Dashboard and CSV** are both built from one function that returns a row per disbursed loan (`reports/portfolio.service.ts`), and one `summarize()` produces the totals, so they cannot drift apart. The CSV covers loans *disbursed* in `[from, to]`, both active and closed. The dashboard takes the same optional range.
+  - "Interest accrued today" is one day of interest on each active loan disbursed before today. It is an indicator: because interest is rounded per segment, the sum of daily figures can differ from the interest actually charged by a few paise.
+  - "Overdue amount" is the total due, principal plus interest.
+- **Renewal** takes one transaction:
+  1. Record a payment of the old loan's full total due (mode `RENEWAL`) and close the old loan.
+  2. Re-appraise the same items at today's rate.
+  3. Open the new loan, where net disbursal = principal − fee − payoff.
+
+  No gold release is recorded, because the gold stays pledged. Renewals above ₹3,00,000 are rejected rather than parked for approval, to avoid a half-renewed state. Any rule failure rolls back the whole renewal.
+- **Statement and receipt** are server-rendered HTML with print CSS, not PDF. They need the bearer header, so they are opened through an API client or a future frontend.
 
 ## Main design choices
 
@@ -30,14 +43,15 @@
 ## Deliberately left out
 
 - **Frontend (Tier 1 item 9).** No screens were built. The API, Swagger UI and seed data are the way to use it. This was a conscious time trade-off in favour of correct and tested backend rules.
-- Tier 3: nightly accrual job, customer self-service view, payment reversal, deployment.
+- Tier 3: nightly accrual job, customer self-service view, payment reversal, deployment. CI (typecheck, tests, Docker build) is included and passing.
 - Real email, SMS, KYC and payment gateways. Email goes to Mailpit or the console. There is no KYC check beyond format validation.
 
 ## Known gaps and risks
 
-- `docker compose up` was written but **not run end to end** while building, because the build sandbox had no working Docker. Migrations, seed, server and the full test suite were run against a local Postgres 16 with the same commands the container runs. The Redis-backed code paths (rate limit store, rate cache) are not covered by the automated tests, which use the in-process fallback.
+- `docker compose up` itself was **not run end to end** while building, because the build sandbox had no working Docker. GitHub Actions does build the Docker image and runs the full test suite against a fresh Postgres 16. Migrations, seed and the server were also run locally with the same commands the container runs. The Redis-backed code paths (rate limit store, rate cache) are not covered by the automated tests, which use the in-process fallback.
 - Date-only fields (`disbursedOn`, `maturityDate`, `dateOfBirth`) are serialised as ISO timestamps at midnight UTC (`2026-10-31T00:00:00.000Z`). Clients should read only the date part.
 - Per-IP limits depend on `TRUST_PROXY` being set correctly behind a load balancer.
+- **Report scale.** The portfolio function loads every disbursed loan in scope into memory. That is fine for one branch, but an admin all-branch dashboard at 200k loans would be slow. The fix is to aggregate in SQL or to read from a nightly snapshot, which is what the Tier 3 accrual job would produce.
 - Rejection stores the deciding manager in `approvedById`. The column name is misleading for rejections.
 - The audit log is append-only at the application and trigger level, but a database superuser can still disable the triggers. A hash chain or an external log sink would make tampering detectable.
 - The request-code endpoint takes slightly longer for known emails, because it sends mail. That timing could leak which emails exist.
