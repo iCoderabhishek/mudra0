@@ -1,0 +1,237 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  STAFF
+  MANAGER
+  ADMIN
+}
+
+enum Scheme {
+  STANDARD
+  QUICK
+}
+
+enum LoanStatus {
+  PENDING_APPROVAL
+  ACTIVE
+  REJECTED
+  CLOSED
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  BANK_TRANSFER
+  RENEWAL
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
+  users      User[]
+  customers  Customer[]
+  appraisals Appraisal[]
+  loans      Loan[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String
+  role      Role
+  branchId  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  branch   Branch?   @relation(fields: [branchId], references: [id])
+  sessions Session[]
+}
+
+model LoginCode {
+  id        String    @id @default(cuid())
+  email     String
+  codeHash  String
+  attempts  Int       @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email, createdAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Customer {
+  id           String   @id @default(cuid())
+  branchId     String
+  name         String
+  phone        String
+  dateOfBirth  DateTime @db.Date
+  address      String
+  pan          String   @unique
+  aadhaarLast4 String   @db.Char(4)
+  createdById  String
+  createdAt    DateTime @default(now())
+
+  branch     Branch      @relation(fields: [branchId], references: [id])
+  appraisals Appraisal[]
+  loans      Loan[]
+
+  @@index([branchId, createdAt])
+  @@index([phone])
+}
+
+model GoldRate {
+  id               String   @id @default(cuid())
+  ratePaisePerGram BigInt
+  effectiveDate    DateTime @db.Date
+  setById          String
+  createdAt        DateTime @default(now())
+
+  appraisals Appraisal[]
+
+  @@index([createdAt])
+}
+
+model Appraisal {
+  id                  String   @id @default(cuid())
+  customerId          String
+  branchId            String
+  goldRateId          String
+  ratePaisePerGram    BigInt
+  totalNetWeightMg    Int
+  appraisedValuePaise BigInt
+  maxLoanPaise        BigInt
+  createdById         String
+  createdAt           DateTime @default(now())
+
+  customer Customer        @relation(fields: [customerId], references: [id])
+  branch   Branch          @relation(fields: [branchId], references: [id])
+  goldRate GoldRate        @relation(fields: [goldRateId], references: [id])
+  items    AppraisalItem[]
+  loans    Loan[]
+
+  @@index([customerId, createdAt])
+}
+
+model AppraisalItem {
+  id            String @id @default(cuid())
+  appraisalId   String
+  description   String
+  grossWeightMg Int
+  stoneWeightMg Int
+  netWeightMg   Int
+  karat         Int
+  valuePaise    BigInt
+
+  appraisal Appraisal @relation(fields: [appraisalId], references: [id])
+
+  @@index([appraisalId])
+}
+
+model Loan {
+  id                        String     @id @default(cuid())
+  branchId                  String
+  customerId                String
+  appraisalId               String
+  scheme                    Scheme
+  principalPaise            BigInt
+  annualRateBps             Int
+  tenureMonths              Int
+  ltvCapBps                 Int
+  processingFeePaise        BigInt
+  renewalPayoffPaise        BigInt     @default(0)
+  netDisbursalPaise         BigInt
+  outstandingPrincipalPaise BigInt
+  status                    LoanStatus
+  disbursedOn               DateTime?  @db.Date
+  maturityDate              DateTime?  @db.Date
+  createdById               String
+  approvedById              String?
+  approvedAt                DateTime?
+  rejectedReason            String?
+  closedById                String?
+  closedAt                  DateTime?
+  renewedFromId             String?    @unique
+  createdAt                 DateTime   @default(now())
+  updatedAt                 DateTime   @updatedAt
+
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  appraisal   Appraisal    @relation(fields: [appraisalId], references: [id])
+  renewedFrom Loan?        @relation("Renewal", fields: [renewedFromId], references: [id])
+  renewedInto Loan?        @relation("Renewal")
+  payments    Payment[]
+  goldRelease GoldRelease?
+
+  @@index([branchId, status, createdAt])
+  @@index([customerId])
+  @@index([status, maturityDate])
+  @@index([createdAt])
+}
+
+model Payment {
+  id                 String      @id @default(cuid())
+  loanId             String
+  amountPaise        BigInt
+  interestPaidPaise  BigInt
+  principalPaidPaise BigInt
+  mode               PaymentMode
+  paidOn             DateTime    @db.Date
+  idempotencyKey     String
+  recordedById       String
+  createdAt          DateTime    @default(now())
+
+  loan Loan @relation(fields: [loanId], references: [id])
+
+  @@unique([loanId, idempotencyKey])
+  @@index([loanId, createdAt])
+  @@index([paidOn])
+}
+
+model GoldRelease {
+  id           String   @id @default(cuid())
+  loanId       String   @unique
+  releasedById String
+  releasedAt   DateTime @default(now())
+  items        Json
+
+  loan Loan @relation(fields: [loanId], references: [id])
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actorId    String
+  action     String
+  entityType String
+  entityId   String
+  branchId   String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([branchId, createdAt])
+  @@index([createdAt])
+}
